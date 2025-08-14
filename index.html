@@ -112,10 +112,7 @@
           const [eyesClosedCount, setEyesClosedCount] = useState(0);
           const [handModel, setHandModel] = useState(null);
           const [lastHandState, setLastHandState] = useState(null);
-          const [tapDetected, setTapDetected] = useState(false);
-          const tapTimerRef = useRef(null);
-          const [handGestureStatus, setHandGestureStatus] = useState('');
-          const handGestureStatusRef = useRef('');
+          const [lastTapTime, setLastTapTime] = useState(0);
 
           // Load API key from localStorage on component mount
           useEffect(() => {
@@ -164,8 +161,10 @@
               newRecognition.onend = () => {
                 setIsListening(false);
                 if (speechTextRef.current.trim() !== '') {
+                    // Automatically trigger AI processing after a pause in speech
                     handleAskAI(speechTextRef.current, 'short');
                 } else {
+                    // Automatically restart listening if nothing was captured
                     recognition.start();
                 }
               };
@@ -227,7 +226,7 @@
                   new faceapi.TinyFaceDetectorOptions()
                 ).withFaceLandmarks();
                 
-                // Eye tracking logic
+                // Eye tracking logic (blink to restart)
                 if (faceDetections) {
                   const leftEye = faceDetections.landmarks.getLeftEye();
                   const rightEye = faceDetections.landmarks.getRightEye();
@@ -248,16 +247,16 @@
                   if (predictions && predictions.length > 0) {
                     const gesture = predictions[0].label;
                     const handBox = predictions[0].bbox;
-                    handGestureStatusRef.current = `Hand: ${gesture}`;
-                    setHandGestureStatus(`Hand: ${gesture}`);
                     
-                    // Two-finger tap detection
-                    if (lastHandState === 'open' && gesture === 'closed') {
-                      setTapDetected(true);
-                      clearTimeout(tapTimerRef.current);
-                      tapTimerRef.current = setTimeout(() => {
-                        setTapDetected(false);
-                      }, 500); // Reset tap detection after 500ms
+                    // Double-tap logic
+                    if (lastHandState === 'closed' && gesture === 'open') {
+                      const currentTime = Date.now();
+                      if (currentTime - lastTapTime < 500) { // Check if second tap is within 500ms
+                          toggleListening();
+                          setLastTapTime(0); // Reset timer
+                      } else {
+                          setLastTapTime(currentTime);
+                      }
                     }
                     setLastHandState(gesture);
 
@@ -271,49 +270,20 @@
                         handBox[1] < faceBox.y + faceBox.height / 2 &&
                         handBox[1] + handBox[3] > faceBox.y;
 
-                      if (handNearForehead) {
-                          if (isListening) {
-                              toggleListening();
-                          } else {
-                              toggleListening();
-                          }
-                      }
-                    }
-
-                    // Open/Closed hand gesture control
-                    if (gesture === 'open') {
-                      if (!isListening) {
-                        toggleListening();
-                      }
-                    } else if (gesture === 'closed') {
-                      if (isListening) {
-                        toggleListening();
+                      if (isListening && handNearForehead) {
+                          toggleListening();
                       }
                     }
                   } else {
                     setLastHandState(null);
-                    setHandGestureStatus('No Hand Detected');
                   }
                 }
               }, 100); // Check every 100ms
               
               return () => clearInterval(detectFeatures);
             }
-          }, [isListening, modelsLoaded, handModel, lastHandState]);
+          }, [isListening, modelsLoaded, handModel, lastHandState, lastTapTime]);
           
-          // Trigger two-finger tap action
-          useEffect(() => {
-            if (tapDetected) {
-              if (isListening) {
-                toggleListening();
-                setTapDetected(false); // Reset the state after triggering
-              } else {
-                toggleListening();
-                setTapDetected(false);
-              }
-            }
-          }, [tapDetected]);
-
           // Trigger action when eyes are closed for a short period
           useEffect(() => {
             if (eyesClosedCount >= 3 && eyesClosedCount <= 9) {
@@ -367,10 +337,11 @@
             setIsAiProcessing(true);
 
             let prompt;
+            // Updated prompt to make the AI better at interpreting broken or imperfect text
             if (responseType === 'short') {
-              prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be direct, accurate, and extremely concise, in a single sentence if possible. The user's question is: "${text}"`;
+              prompt = `The following text is from a speech-to-text service. It may contain errors. Your task is to first interpret the user's intended question and then provide a direct, concise, and single-sentence answer. The user's text is: "${text}"`;
             } else {
-              prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be detailed, accurate, and comprehensive, providing a full explanation. The user's question is: "${text}"`;
+              prompt = `The following text is from a speech-to-text service. It may contain errors. Your task is to first interpret the user's intended question and then provide a detailed, comprehensive, and well-structured answer. The user's text is: "${text}"`;
             }
 
             try {
@@ -532,23 +503,18 @@
                   {isAiProcessing && !isListening && <p className="text-gray-800 text-sm animate-pulse">Thinking...</p>}
                 </div>
 
-                {/* Hand Gesture Status (for debugging) */}
-                <div className="h-4">
-                  <p className="text-xs text-gray-500">{handGestureStatus}</p>
-                </div>
-
                 {/* Output Section */}
                 <div className="space-y-4 w-full">
-                  <div className="iphone-glass-effect p-4 rounded-xl text-left h-20 overflow-auto border border-gray-300">
+                  <div className="iphone-glass-effect p-4 rounded-xl text-left h-20 overflow-hidden border border-gray-300">
                     <h2 className="text-base font-bold mb-1 text-gray-800">Your Question:</h2>
                     <p className="text-sm text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
                   </div>
                   
                   {shortAnswer && (
                     <div className="space-y-4">
-                        <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${shortAnswer && 'answer-highlight'}`}>
+                        <div className={`relative iphone-glass-effect p-4 rounded-xl text-left h-24 overflow-auto border border-gray-300 ${shortAnswer && 'answer-highlight'}`}>
                           <h2 className="text-base font-bold mb-1 text-gray-800">AI Answer:</h2>
-                          <p className="text-2xl font-bold text-gray-600">{shortAnswer}</p>
+                          <p className="text-xl font-bold text-gray-600">{shortAnswer}</p>
                           <button
                             onClick={() => handleSpeakAnswer(shortAnswer)}
                             disabled={isSpeaking}
@@ -577,7 +543,7 @@
                           </button>
                         )}
                         {fullAnswer && (
-                          <div className="iphone-glass-effect p-4 rounded-xl text-left border border-gray-300">
+                          <div className="iphone-glass-effect p-4 rounded-xl text-left max-h-32 overflow-auto border border-gray-300">
                               <h2 className="text-base font-bold mb-1 text-gray-800">Full Answer:</h2>
                               <p className="text-sm text-gray-600 whitespace-pre-wrap">{fullAnswer}</p>
                           </div>
