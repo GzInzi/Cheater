@@ -16,7 +16,7 @@
         background-color: rgba(255, 255, 255, 0.4);
         backdrop-filter: blur(10px) saturate(180%);
         -webkit-backdrop-filter: blur(10px) saturate(180%);
-        border: 1px solid rgba(209, 213, 219, 0.3);
+        /* Border will now be applied conditionally with Tailwind */
       }
       .answer-highlight {
         background-color: rgba(59, 130, 246, 0.2); /* blue-500 with transparency */
@@ -144,7 +144,6 @@
                         await new Promise(resolve => setTimeout(resolve, waitMs));
                     }
 
-                    // ############  NEW, STRICTER PROMPT  ############
                     const prompt = `You will be given a multiple-choice question and a list of possible answers. Your task is to choose the single best answer from the provided list ONLY. Do not use outside knowledge to provide an answer that is not in the list. Respond with only the text of the correct option. The user's input is: "${text}"`;
                     
                     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
@@ -220,41 +219,47 @@
           };
           
           return (
-            <div className="min-h-screen bg-gray-200 font-sans text-gray-800 p-8 flex flex-col items-center justify-center">
-              <div className="iphone-glass-effect p-6 rounded-3xl shadow-lg w-full max-w-sm space-y-6 border text-center">
+            // ############  UPDATED LAYOUT CONTAINER  ############
+            <div className="min-h-screen bg-gray-200 font-sans text-gray-800 flex sm:items-center sm:justify-center">
+              {/* ############  UPDATED CARD WITH RESPONSIVE STYLES  ############ */}
+              <div className="iphone-glass-effect w-full flex-grow flex flex-col p-6 space-y-4 text-center sm:flex-grow-0 sm:max-w-sm sm:rounded-3xl sm:shadow-lg sm:border border-gray-300/30">
                 
-                <div className="mb-4">
-                  <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
-                  <p className="text-gray-600">Tap the mic to start, speak, then tap again to stop.</p>
+                {/* This div pushes the button and output to the bottom on mobile */}
+                <div className="flex-grow flex flex-col justify-center items-center space-y-4">
+                    <div className="mb-4">
+                      <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
+                      <p className="text-gray-600">Tap the mic to start, speak, then tap again to stop.</p>
+                    </div>
+
+                    <button
+                      onClick={toggleListening}
+                      disabled={!isReady || isAiProcessing}
+                      className={`w-28 h-28 rounded-full transition-all duration-300 shadow-lg flex-shrink-0
+                      ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-blue-500 hover:bg-blue-600'} 
+                      disabled:bg-gray-400 disabled:scale-100 disabled:ring-0`}
+                    >
+                      <svg className={`mx-auto text-white ${isListening ? 'animate-pulse' : ''}`} width="48" height="48" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 14C13.1046 14 14 13.1046 14 12V6C14 4.89543 13.1046 4 12 4C10.8954 4 10 4.89543 10 6V12C10 13.1046 10.8954 14 12 14Z"/>
+                        <path d="M17 12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12H5C5 15.866 7.93452 19 11.5 19V22H12.5V19C16.0655 19 19 15.866 19 12H17Z"/>
+                      </svg>
+                    </button>
+
+                    <div className="h-6">
+                      {error && <p className="text-red-500">{error}</p>}
+                      {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
+                      {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">{statusMessage}</p>}
+                    </div>
                 </div>
 
-                <button
-                  onClick={toggleListening}
-                  disabled={!isReady || isAiProcessing}
-                  className={`w-28 h-28 rounded-full transition-all duration-300 shadow-lg  
-                  ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-blue-500 hover:bg-blue-600'} 
-                  disabled:bg-gray-400 disabled:scale-100 disabled:ring-0`}
-                >
-                  <svg className={`mx-auto text-white ${isListening ? 'animate-pulse' : ''}`} width="48" height="48" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M12 14C13.1046 14 14 13.1046 14 12V6C14 4.89543 13.1046 4 12 4C10.8954 4 10 4.89543 10 6V12C10 13.1046 10.8954 14 12 14Z"/>
-                    <path d="M17 12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12H5C5 15.866 7.93452 19 11.5 19V22H12.5V19C16.0655 19 19 15.866 19 12H17Z"/>
-                  </svg>
-                </button>
-
-                <div className="h-6">
-                  {error && <p className="text-red-500">{error}</p>}
-                  {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
-                  {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">{statusMessage}</p>}
-                </div>
-
-                <div className="space-y-4">
-                  <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300">
+                {/* This is the output section */}
+                <div className="space-y-4 flex-shrink-0">
+                  <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300/30">
                     <h2 className="text-lg font-bold mb-2 text-gray-800">Your Question:</h2>
                     <p className="text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
                   </div>
                   
                   {answer && (
-                    <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${answer && 'answer-highlight'}`}>
+                    <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300/30 ${answer && 'answer-highlight'}`}>
                       <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
                       <p className="text-gray-600">{answer}</p>
                       {!answer.startsWith('Error:') && (<button
