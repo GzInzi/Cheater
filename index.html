@@ -43,6 +43,15 @@
           const [isReady, setIsReady] = useState(false);
           const [apiKey, setApiKey] = useState("");
           const [showApiModal, setShowApiModal] = useState(false);
+          const [saveApiKey, setSaveApiKey] = useState(false);
+
+          // Load API key from localStorage on component mount
+          useEffect(() => {
+            const savedKey = localStorage.getItem('geminiApiKey');
+            if (savedKey) {
+              setApiKey(savedKey);
+            }
+          }, []);
 
           // Set up the SpeechRecognition API
           useEffect(() => {
@@ -113,7 +122,9 @@
           // Function to call the Gemini API for an answer
           const handleAskAI = async (text) => {
             if (!text) return;
-            if (!apiKey) {
+            // Check for API key in state or local storage
+            const keyToUse = apiKey || localStorage.getItem('geminiApiKey');
+            if (!keyToUse) {
               setShowApiModal(true);
               return;
             }
@@ -131,7 +142,7 @@
                 }]
               };
 
-              const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+              const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${keyToUse}`;
 
               const response = await fetch(apiUrl, {
                 method: 'POST',
@@ -215,6 +226,16 @@
                       value={apiKey}
                       onChange={(e) => setApiKey(e.target.value)}
                     />
+                    <div className="flex items-center space-x-2 mb-4">
+                      <input
+                        type="checkbox"
+                        id="save-key-checkbox"
+                        checked={saveApiKey}
+                        onChange={(e) => setSaveApiKey(e.target.checked)}
+                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                      />
+                      <label htmlFor="save-key-checkbox" className="text-gray-600">Save API Key</label>
+                    </div>
                     <div className="flex justify-end space-x-2">
                       <button
                         onClick={() => setShowApiModal(false)}
@@ -224,6 +245,11 @@
                       </button>
                       <button
                         onClick={() => {
+                          if (saveApiKey) {
+                            localStorage.setItem('geminiApiKey', apiKey);
+                          } else {
+                            localStorage.removeItem('geminiApiKey');
+                          }
                           setShowApiModal(false);
                           if (speechText) {
                             handleAskAI(speechText);
