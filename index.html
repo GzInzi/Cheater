@@ -23,6 +23,20 @@
       .answer-highlight {
         background-color: rgba(59, 130, 246, 0.2); /* blue-500 with transparency */
       }
+      /* Ensure no scrolling on the page */
+      html, body, #root {
+        height: 100%;
+        overflow: hidden;
+      }
+      .video-container {
+        position: relative;
+        width: 100%;
+        max-width: 150px; /* Smaller video container */
+        margin: 0 auto;
+      }
+      .video-container video {
+        transform: scaleX(-1);
+      }
     </style>
 </head>
 <body>
@@ -94,10 +108,14 @@
           const videoRef = useRef();
           const [modelsLoaded, setModelsLoaded] = useState(false);
           const speechTextRef = useRef('');
-
-          // State for eye and hand tracking
+          
           const [eyesClosedCount, setEyesClosedCount] = useState(0);
           const [handModel, setHandModel] = useState(null);
+          const [lastHandState, setLastHandState] = useState(null);
+          const [tapDetected, setTapDetected] = useState(false);
+          const tapTimerRef = useRef(null);
+          const [handGestureStatus, setHandGestureStatus] = useState('');
+          const handGestureStatusRef = useRef('');
 
           // Load API key from localStorage on component mount
           useEffect(() => {
@@ -202,7 +220,7 @@
 
           // Eye, Hand, and Hand-to-Face tracking logic
           useEffect(() => {
-            if (isListening && videoRef.current && modelsLoaded) {
+            if (videoRef.current && modelsLoaded) {
               const detectFeatures = setInterval(async () => {
                 const faceDetections = await faceapi.detectSingleFace(
                   videoRef.current,
@@ -230,25 +248,33 @@
                   if (predictions && predictions.length > 0) {
                     const gesture = predictions[0].label;
                     const handBox = predictions[0].bbox;
+                    handGestureStatusRef.current = `Hand: ${gesture}`;
+                    setHandGestureStatus(`Hand: ${gesture}`);
+                    
+                    // Two-finger tap detection
+                    if (lastHandState === 'open' && gesture === 'closed') {
+                      setTapDetected(true);
+                      clearTimeout(tapTimerRef.current);
+                      tapTimerRef.current = setTimeout(() => {
+                        setTapDetected(false);
+                      }, 500); // Reset tap detection after 500ms
+                    }
+                    setLastHandState(gesture);
 
-                    // Hand-to-face detection (forehead touch) - More Sensitive Logic
+                    // Hand-to-face detection (forehead touch)
                     if (faceDetections) {
                       const faceBox = faceDetections.detection.box;
 
-                      // Calculate the center of the hand and the top of the face
-                      const handCenterY = handBox[1] + handBox[3] / 2;
-                      const foreheadTop = faceBox.y;
-                      const foreheadBottom = faceBox.y + faceBox.height / 3;
-
-                      // Check if the hand's center is within the forehead area
-                      const isHandNearForehead = 
+                      const handNearForehead = 
                         handBox[0] < faceBox.x + faceBox.width &&
                         handBox[0] + handBox[2] > faceBox.x &&
-                        handCenterY > foreheadTop &&
-                        handCenterY < foreheadBottom;
+                        handBox[1] < faceBox.y + faceBox.height / 2 &&
+                        handBox[1] + handBox[3] > faceBox.y;
 
-                      if (isHandNearForehead) {
+                      if (handNearForehead) {
                           if (isListening) {
+                              toggleListening();
+                          } else {
                               toggleListening();
                           }
                       }
@@ -264,14 +290,30 @@
                         toggleListening();
                       }
                     }
+                  } else {
+                    setLastHandState(null);
+                    setHandGestureStatus('No Hand Detected');
                   }
                 }
               }, 100); // Check every 100ms
               
               return () => clearInterval(detectFeatures);
             }
-          }, [isListening, modelsLoaded, handModel]);
+          }, [isListening, modelsLoaded, handModel, lastHandState]);
           
+          // Trigger two-finger tap action
+          useEffect(() => {
+            if (tapDetected) {
+              if (isListening) {
+                toggleListening();
+                setTapDetected(false); // Reset the state after triggering
+              } else {
+                toggleListening();
+                setTapDetected(false);
+              }
+            }
+          }, [tapDetected]);
+
           // Trigger action when eyes are closed for a short period
           useEffect(() => {
             if (eyesClosedCount >= 3 && eyesClosedCount <= 9) {
@@ -452,28 +494,30 @@
           };
           
           return (
-            <div className="min-h-screen bg-gray-200 font-sans text-gray-800 p-8 flex flex-col items-center justify-center">
-              <div className="iphone-glass-effect p-6 rounded-3xl shadow-lg w-full max-w-sm space-y-6 border text-center">
+            <div className="h-full bg-gray-200 font-sans text-gray-800 p-4 flex flex-col items-center justify-center">
+              <div className="iphone-glass-effect p-6 rounded-3xl shadow-lg w-full max-w-sm flex flex-col items-center space-y-4 text-center">
                 
                 {/* Cheater */}
-                <div className="mb-4">
-                  <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
-                  <p className="text-gray-600">Tap the mic, speak your question, and get an instant answer.</p>
+                <div className="mb-2">
+                  <h1 className="text-2xl font-bold text-gray-800">Cheater</h1>
+                  <p className="text-gray-600 text-xs">Use gestures to interact.</p>
                 </div>
 
-                {/* Visible video element for eye and hand tracking */}
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  muted
-                  className="w-full h-auto rounded-xl shadow-lg border border-gray-300"
-                ></video>
+                {/* Video container for hand gesture and eye tracking */}
+                <div className="video-container">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    muted
+                    className="w-full h-auto rounded-xl shadow-lg border border-gray-300"
+                  ></video>
+                </div>
 
                 {/* Microphone Button */}
                 <button
                   onClick={toggleListening}
                   disabled={!isReady}
-                  className={`w-28 h-28 rounded-full transition-all duration-300 shadow-lg 
+                  className={`w-20 h-20 rounded-full transition-all duration-300 shadow-lg 
                   ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400'}`}
                 >
                   <svg className={`mx-auto ${isListening ? 'animate-pulse' : ''}`} width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -482,37 +526,42 @@
                 </button>
 
                 {/* Status Messages */}
-                <div className="h-6">
-                  {error && <p className="text-red-500">{error}</p>}
-                  {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
-                  {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">Thinking...</p>}
+                <div className="h-4">
+                  {error && <p className="text-red-500 text-sm">{error}</p>}
+                  {isListening && <p className="text-gray-800 text-sm animate-pulse">Listening...</p>}
+                  {isAiProcessing && !isListening && <p className="text-gray-800 text-sm animate-pulse">Thinking...</p>}
+                </div>
+
+                {/* Hand Gesture Status (for debugging) */}
+                <div className="h-4">
+                  <p className="text-xs text-gray-500">{handGestureStatus}</p>
                 </div>
 
                 {/* Output Section */}
-                <div className="space-y-4">
-                  <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300">
-                    <h2 className="text-lg font-bold mb-2 text-gray-800">Your Question:</h2>
-                    <p className="text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
+                <div className="space-y-4 w-full">
+                  <div className="iphone-glass-effect p-4 rounded-xl text-left h-20 overflow-auto border border-gray-300">
+                    <h2 className="text-base font-bold mb-1 text-gray-800">Your Question:</h2>
+                    <p className="text-sm text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
                   </div>
                   
                   {shortAnswer && (
                     <div className="space-y-4">
                         <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${shortAnswer && 'answer-highlight'}`}>
-                          <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
-                          <p className="text-gray-600">{shortAnswer}</p>
+                          <h2 className="text-base font-bold mb-1 text-gray-800">AI Answer:</h2>
+                          <p className="text-2xl font-bold text-gray-600">{shortAnswer}</p>
                           <button
                             onClick={() => handleSpeakAnswer(shortAnswer)}
                             disabled={isSpeaking}
-                            className="absolute bottom-4 right-4 bg-gray-300 hover:bg-gray-400 disabled:bg-gray-400 text-gray-800 p-2 rounded-full transition duration-200"
+                            className="absolute bottom-2 right-2 bg-gray-300 hover:bg-gray-400 disabled:bg-gray-400 text-gray-800 p-1 rounded-full transition duration-200"
                             aria-label="Read answer aloud"
                           >
                             {isSpeaking ? (
-                              <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                               </svg>
                             ) : (
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M14.5 12c0 .9-.7 1.7-1.5 1.9v4.2c2.8-.5 5-3 5-6.1s-2.2-5.6-5-6.1v4.2c.8.2 1.5 1 1.5 1.9zm-2.5 0V6.1c-2.8.5-5 3-5 6.1s2.2 5.6 5 6.1v-4.2c-.8-.2-1.5-1-1.5-1.9zm-3.5 0H5.5c0 3.8 2.5 7.1 6 7.9V21h1v-1.9c3.5-.9 6-4.2 6-7.9h-1c0 3.1-2.2 5.6-5 6.1v-4.2c.8.2 1.5 1 1.5 1.9v-4.2c-2.8.5-5 3-5 6.1v4.2c.8.2 1.5 1 1.5 1.9z"/>
                               </svg>
                             )}
@@ -529,8 +578,8 @@
                         )}
                         {fullAnswer && (
                           <div className="iphone-glass-effect p-4 rounded-xl text-left border border-gray-300">
-                              <h2 className="text-lg font-bold mb-2 text-gray-800">Full Answer:</h2>
-                              <p className="text-gray-600 whitespace-pre-wrap">{fullAnswer}</p>
+                              <h2 className="text-base font-bold mb-1 text-gray-800">Full Answer:</h2>
+                              <p className="text-sm text-gray-600 whitespace-pre-wrap">{fullAnswer}</p>
                           </div>
                         )}
                     </div>
