@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -10,6 +9,7 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@1.3.1/dist/face-api.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/handtrackjs/dist/handtrack.min.js"> </script>
     <style>
       body {
         background-color: #f0f0f0;
@@ -81,8 +81,8 @@
           const [isListening, setIsListening] = useState(false);
           const [recognition, setRecognition] = useState(null);
           const [speechText, setSpeechText] = useState('');
-          const [shortAnswer, setShortAnswer] = useState(''); // New state for short answer
-          const [fullAnswer, setFullAnswer] = useState(''); // New state for full answer
+          const [shortAnswer, setShortAnswer] = useState('');
+          const [fullAnswer, setFullAnswer] = useState('');
           const [isAiProcessing, setIsAiProcessing] = useState(false);
           const [isSpeaking, setIsSpeaking] = useState(false);
           const [error, setError] = useState('');
@@ -95,9 +95,9 @@
           const [modelsLoaded, setModelsLoaded] = useState(false);
           const speechTextRef = useRef('');
 
-          // State for eye tracking
-          const [isEyeClosed, setIsEyeClosed] = useState(false);
+          // State for eye and hand tracking
           const [eyesClosedCount, setEyesClosedCount] = useState(0);
+          const [handModel, setHandModel] = useState(null);
 
           // Load API key from localStorage on component mount
           useEffect(() => {
@@ -111,9 +111,9 @@
           useEffect(() => {
             if ('webkitSpeechRecognition' in window) {
               const newRecognition = new window.webkitSpeechRecognition();
-              newRecognition.continuous = false; // Stop after a complete phrase
-              newRecognition.lang = 'en-IN'; // Set language to Indian English
-              newRecognition.interimResults = true; // Show results as they are being spoken
+              newRecognition.continuous = false;
+              newRecognition.lang = 'en-IN';
+              newRecognition.interimResults = true;
               
               newRecognition.onstart = () => {
                 setIsListening(true);
@@ -148,8 +148,6 @@
                 if (speechTextRef.current.trim() !== '') {
                     handleAskAI(speechTextRef.current, 'short');
                 } else {
-                    // If eyes were closed and no text was captured, restart listening
-                    // This happens after a short blink
                     recognition.start();
                 }
               };
@@ -167,16 +165,25 @@
           }, [speechText]);
 
 
-          // Load face-api.js models and start camera
+          // Load face-api.js and Handtrack.js models and start camera
           useEffect(() => {
             const loadModels = async () => {
               if (window.faceapi) {
                 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@1.3.1/models';
                 await faceapi.nets.tinyFaceDetector.load(MODEL_URL);
                 await faceapi.nets.faceLandmark68Net.load(MODEL_URL);
-                setModelsLoaded(true);
-                startCamera();
               }
+              if (window.handTrack) {
+                const modelParams = {
+                  flip: true,
+                  maxNumBoxes: 1,
+                  scoreThreshold: 0.7,
+                };
+                const model = await handTrack.load(modelParams);
+                setHandModel(model);
+              }
+              setModelsLoaded(true);
+              startCamera();
             };
             loadModels();
           }, []);
@@ -189,34 +196,26 @@
               })
               .catch(err => {
                 console.error("Camera access denied:", err);
-                setError("Camera access denied. Eye tracking is disabled.");
+                setError("Camera access denied. Eye and hand tracking are disabled.");
               });
           };
 
-          // Eye tracking logic
+          // Eye, Hand, and Hand-to-Face tracking logic
           useEffect(() => {
             if (isListening && videoRef.current && modelsLoaded) {
-              const detectEyes = setInterval(async () => {
-                const detections = await faceapi.detectSingleFace(
+              const detectFeatures = setInterval(async () => {
+                const faceDetections = await faceapi.detectSingleFace(
                   videoRef.current,
                   new faceapi.TinyFaceDetectorOptions()
                 ).withFaceLandmarks();
+                
+                // Eye tracking logic
+                if (faceDetections) {
+                  const leftEye = faceDetections.landmarks.getLeftEye();
+                  const rightEye = faceDetections.landmarks.getRightEye();
 
-                if (detections) {
-                  const leftEye = detections.landmarks.getLeftEye();
-                  const rightEye = detections.landmarks.getRightEye();
-
-                  const leftEyeClosed = faceapi.euclideanDistance(
-                    leftEye[1], leftEye[4]
-                  ) < 5 && faceapi.euclideanDistance(
-                    leftEye[2], leftEye[3]
-                  ) < 5;
-                  
-                  const rightEyeClosed = faceapi.euclideanDistance(
-                    rightEye[1], rightEye[4]
-                  ) < 5 && faceapi.euclideanDistance(
-                    rightEye[2], rightEye[3]
-                  ) < 5;
+                  const leftEyeClosed = faceapi.euclideanDistance(leftEye[1], leftEye[4]) < 5 && faceapi.euclideanDistance(leftEye[2], leftEye[3]) < 5;
+                  const rightEyeClosed = faceapi.euclideanDistance(rightEye[1], rightEye[4]) < 5 && faceapi.euclideanDistance(rightEye[2], rightEye[3]) < 5;
 
                   if (leftEyeClosed && rightEyeClosed) {
                     setEyesClosedCount(prev => prev + 1);
@@ -224,30 +223,70 @@
                     setEyesClosedCount(0);
                   }
                 }
+
+                // Hand gesture tracking logic
+                if (handModel) {
+                  const predictions = await handModel.detect(videoRef.current);
+                  if (predictions && predictions.length > 0) {
+                    const gesture = predictions[0].label;
+                    const handBox = predictions[0].bbox;
+
+                    // Hand-to-face detection (forehead touch) - More Sensitive Logic
+                    if (faceDetections) {
+                      const faceBox = faceDetections.detection.box;
+
+                      // Calculate the center of the hand and the top of the face
+                      const handCenterY = handBox[1] + handBox[3] / 2;
+                      const foreheadTop = faceBox.y;
+                      const foreheadBottom = faceBox.y + faceBox.height / 3;
+
+                      // Check if the hand's center is within the forehead area
+                      const isHandNearForehead = 
+                        handBox[0] < faceBox.x + faceBox.width &&
+                        handBox[0] + handBox[2] > faceBox.x &&
+                        handCenterY > foreheadTop &&
+                        handCenterY < foreheadBottom;
+
+                      if (isHandNearForehead) {
+                          if (isListening) {
+                              toggleListening();
+                          }
+                      }
+                    }
+
+                    // Open/Closed hand gesture control
+                    if (gesture === 'open') {
+                      if (!isListening) {
+                        toggleListening();
+                      }
+                    } else if (gesture === 'closed') {
+                      if (isListening) {
+                        toggleListening();
+                      }
+                    }
+                  }
+                }
               }, 100); // Check every 100ms
               
-              return () => clearInterval(detectEyes);
+              return () => clearInterval(detectFeatures);
             }
-          }, [isListening, modelsLoaded]);
+          }, [isListening, modelsLoaded, handModel]);
           
           // Trigger action when eyes are closed for a short period
           useEffect(() => {
-            // If eyes are closed for 3-9 frames (0.3 to 0.9 seconds)
             if (eyesClosedCount >= 3 && eyesClosedCount <= 9) {
-                // Check if listening and speechText is empty, meaning a new question is needed
                 if (isListening && !speechText) {
-                    // Stop the current listening session to restart
                     recognition.stop();
-                    setSpeechText(''); // Clear old text for a new question
+                    setSpeechText('');
                 }
             }
           }, [eyesClosedCount, isListening, recognition, speechText]);
           
           // Trigger stop listening when eyes are closed for a period
           useEffect(() => {
-            if (eyesClosedCount > 15) { // 1.5 seconds of eyes being closed
+            if (eyesClosedCount > 15) {
               if (isListening) {
-                toggleListening(); // This will trigger onend and handleAskAI
+                toggleListening();
               }
             }
           }, [eyesClosedCount]);
@@ -270,10 +309,9 @@
             }
           };
           
-          // Function to call the Gemini API for a short answer
+          // Function to call the Gemini API for a short or full answer
           const handleAskAI = async (text, responseType) => {
             if (!text) return;
-            // Check for API key in state or local storage
             let keyToUse = apiKey;
             if (!keyToUse) {
               keyToUse = localStorage.getItem('geminiApiKey');
@@ -289,7 +327,7 @@
             let prompt;
             if (responseType === 'short') {
               prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be direct, accurate, and extremely concise, in a single sentence if possible. The user's question is: "${text}"`;
-            } else { // 'full'
+            } else {
               prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be detailed, accurate, and comprehensive, providing a full explanation. The user's question is: "${text}"`;
             }
 
@@ -321,7 +359,7 @@
                 const generatedText = result.candidates[0].content.parts[0].text;
                 if (responseType === 'short') {
                   setShortAnswer(generatedText);
-                  setFullAnswer(''); // Clear full answer for new question
+                  setFullAnswer('');
                 } else {
                   setFullAnswer(generatedText);
                 }
@@ -351,7 +389,6 @@
             if (!textToSpeak) return;
             setIsSpeaking(true);
 
-            // Check for API key in state or local storage
             let keyToUse = apiKey;
             if (!keyToUse) {
               keyToUse = localStorage.getItem('geminiApiKey');
@@ -424,7 +461,7 @@
                   <p className="text-gray-600">Tap the mic, speak your question, and get an instant answer.</p>
                 </div>
 
-                {/* Visible video element for eye tracking */}
+                {/* Visible video element for eye and hand tracking */}
                 <video
                   ref={videoRef}
                   autoPlay
@@ -447,8 +484,7 @@
                 {/* Status Messages */}
                 <div className="h-6">
                   {error && <p className="text-red-500">{error}</p>}
-                  {isListening && !isEyeClosed && <p className="text-gray-800 animate-pulse">Listening...</p>}
-                  {isListening && isEyeClosed && <p className="text-gray-800 animate-pulse">Eyes closed, processing question...</p>}
+                  {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
                   {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">Thinking...</p>}
                 </div>
 
