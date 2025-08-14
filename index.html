@@ -11,7 +11,20 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <!-- Babel for JSX compilation in the browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
+    <style>
+      body {
+        background-color: #f0f0f0;
+      }
+      .iphone-glass-effect {
+        background-color: rgba(255, 255, 255, 0.4);
+        backdrop-filter: blur(10px) saturate(180%);
+        -webkit-backdrop-filter: blur(10px) saturate(180%);
+        border: 1px solid rgba(209, 213, 219, 0.3);
+      }
+      .answer-highlight {
+        background-color: rgba(59, 130, 246, 0.2); /* blue-500 with transparency */
+      }
+    </style>
 </head>
 <body>
     <div id="root"></div>
@@ -27,6 +40,7 @@
           const [answer, setAnswer] = useState('');
           const [isAiProcessing, setIsAiProcessing] = useState(false);
           const [error, setError] = useState('');
+          const [isReady, setIsReady] = useState(false);
 
           // Set up the SpeechRecognition API
           useEffect(() => {
@@ -52,15 +66,20 @@
 
               newRecognition.onerror = (event) => {
                 setIsListening(false);
-                setError(`Speech recognition error: ${event.error}`);
+                if (event.error === 'not-allowed') {
+                  setError("Microphone access was denied. Please enable it in your browser settings.");
+                } else {
+                  setError(`Speech recognition error: ${event.error}`);
+                }
                 console.error('Speech recognition error:', event.error);
               };
 
               newRecognition.onend = () => {
                 setIsListening(false);
               };
-
+              
               setRecognition(newRecognition);
+              setIsReady(true);
             } else {
               setError("Speech Recognition is not supported in this browser.");
             }
@@ -68,11 +87,16 @@
 
           // Function to start or stop listening
           const toggleListening = () => {
+            if (!recognition) {
+              setError("Speech Recognition is not available.");
+              return;
+            }
             if (isListening) {
               recognition.stop();
             } else {
               setSpeechText('');
               setAnswer('');
+              setError('');
               recognition.start();
             }
           };
@@ -85,7 +109,7 @@
 
             try {
               // The prompt is now structured to give a very concise answer
-              const prompt = `Based on the following spoken question, provide a single, short, and quick answer: "${text}"`;
+              const prompt = `Based on the following spoken question, provide a short, accurate answer. Just get the answer only: "${text}"`;
               
               const payload = {
                 contents: [{
@@ -126,21 +150,21 @@
           };
           
           return (
-            <div className="min-h-screen bg-gradient-to-br from-purple-500 to-indigo-600 font-sans text-gray-100 p-8 flex flex-col items-center justify-center">
-              <div className="bg-white/20 backdrop-blur-lg p-6 rounded-3xl shadow-2xl w-full max-w-sm space-y-6 border border-white/30 text-center">
+            <div className="min-h-screen bg-gray-200 font-sans text-gray-800 p-8 flex flex-col items-center justify-center">
+              <div className="iphone-glass-effect p-6 rounded-3xl shadow-lg w-full max-w-sm space-y-6 border text-center">
                 
-                {/* Header Section */}
+                {/* Cheater */}
                 <div className="mb-4">
-                  <h1 className="text-3xl font-bold text-white mb-2">Voice AI Assistant</h1>
-                  <p className="text-gray-200">Tap the mic, speak your question, and get an instant answer.</p>
+                  <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
+                  <p className="text-gray-600">Tap the mic, speak your question, and get an instant answer.</p>
                 </div>
 
                 {/* Microphone Button */}
                 <button
                   onClick={toggleListening}
-                  disabled={!recognition}
+                  disabled={!isReady || isListening}
                   className={`w-28 h-28 rounded-full transition-all duration-300 shadow-lg 
-                  ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-green-500 hover:bg-green-600 disabled:bg-gray-400'}`}
+                  ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400'}`}
                 >
                   <svg className={`mx-auto ${isListening ? 'animate-pulse' : ''}`} width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M12 14C14.21 14 16 12.21 16 10V4C16 1.79 14.21 0 12 0C9.79 0 8 1.79 8 4V10C8 12.21 9.79 14 12 14ZM10 4C10 2.9 10.9 2 12 2C13.1 2 14 2.9 14 4V10C14 11.1 13.1 12 12 12C10.9 12 10 11.1 10 10V4ZM12 18C15.31 18 18.06 15.69 18.06 12.5H20.06C20.06 16.3 17.15 19.45 13.5 19.96V23H10.5V19.96C6.85 19.45 3.94 16.3 3.94 12.5H5.94C5.94 15.69 8.69 18 12 18Z" fill="currentColor"/>
@@ -149,21 +173,21 @@
 
                 {/* Status Messages */}
                 <div className="h-6">
-                  {error && <p className="text-red-300">{error}</p>}
-                  {isListening && <p className="text-white animate-pulse">Listening...</p>}
-                  {isAiProcessing && !isListening && <p className="text-white animate-pulse">Thinking...</p>}
+                  {error && <p className="text-red-500">{error}</p>}
+                  {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
+                  {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">Thinking...</p>}
                 </div>
 
                 {/* Output Section */}
                 <div className="space-y-4">
-                  <div className="bg-white/10 p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto">
-                    <h2 className="text-lg font-bold mb-2 text-white">Your Question:</h2>
-                    <p className="text-gray-200">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
+                  <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300">
+                    <h2 className="text-lg font-bold mb-2 text-gray-800">Your Question:</h2>
+                    <p className="text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
                   </div>
 
-                  <div className="bg-white/10 p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto">
-                    <h2 className="text-lg font-bold mb-2 text-white">AI Answer:</h2>
-                    <p className="text-gray-200">{answer || <span className="italic text-gray-400">The AI's answer will appear here.</span>}</p>
+                  <div className={`iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300 ${answer && 'answer-highlight'}`}>
+                    <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
+                    <p className="text-gray-600">{answer || <span className="italic text-gray-400">The AI's answer will appear here.</span>}</p>
                   </div>
                 </div>
               </div>
