@@ -42,6 +42,7 @@
           const [apiKey, setApiKey] = useState("");
           const [showApiModal, setShowApiModal] = useState(false);
           const [saveApiKey, setSaveApiKey] = useState(false);
+          const [statusMessage, setStatusMessage] = useState('');
           const speechTextRef = useRef('');
 
           // Load API key from localStorage on component mount
@@ -57,7 +58,8 @@
           useEffect(() => {
             if ('webkitSpeechRecognition' in window) {
               const newRecognition = new window.webkitSpeechRecognition();
-              newRecognition.continuous = false; // Stop after a complete phrase
+              // CHANGED: Set to true for manual stop
+              newRecognition.continuous = true; 
               newRecognition.lang = 'en-US'; 
               newRecognition.interimResults = true; 
 
@@ -66,25 +68,19 @@
                 setError('');
               };
 
+              // CHANGED: Logic to handle continuous results
               newRecognition.onresult = (event) => {
-                let finalTranscript = '';
-                let interimTranscript = '';
-                for (let i = event.resultIndex; i < event.results.length; ++i) {
-                  if (event.results[i].isFinal) {
-                    finalTranscript += event.results[i][0].transcript;
-                  } else {
-                    interimTranscript += event.results[i][0].transcript;
-                  }
+                let fullTranscript = '';
+                for (let i = 0; i < event.results.length; i++) {
+                    fullTranscript += event.results[i][0].transcript;
                 }
-                setSpeechText(finalTranscript || interimTranscript);
+                setSpeechText(fullTranscript);
               };
 
               newRecognition.onerror = (event) => {
                 setIsListening(false);
                 if (event.error === 'not-allowed') {
                   setError("Microphone access was denied. Please enable it.");
-                } else if (event.error === 'no-speech') {
-                  setError("No speech was detected.");
                 } else {
                   setError(`Speech recognition error: ${event.error}`);
                 }
@@ -93,7 +89,6 @@
               
               newRecognition.onend = () => {
                 setIsListening(false);
-                // Use the ref to get the most up-to-date value
                 if (speechTextRef.current.trim()) { 
                     handleAskAI(speechTextRef.current.trim());
                 }
@@ -106,7 +101,6 @@
             }
           }, []);
 
-          // Update speechTextRef whenever speechText changes
           useEffect(() => {
             speechTextRef.current = speechText;
           }, [speechText]);
@@ -118,8 +112,10 @@
               return;
             }
             if (isListening) {
+              // If listening, stop it. This triggers onend.
               recognition.stop();
             } else {
+              // If not listening, clear old text and start.
               setSpeechText('');
               setAnswer('');
               setError('');
@@ -127,7 +123,6 @@
             }
           };
           
-          // Function to call the Gemini API
           const handleAskAI = async (text) => {
             if (!text) return;
             let keyToUse = apiKey || localStorage.getItem('geminiApiKey');
@@ -139,54 +134,76 @@
 
             setIsAiProcessing(true);
             setAnswer('');
+            setError('');
+            setStatusMessage('Thinking...');
 
-            try {
-              const prompt = `Provide a single-word answer to the following question. If a one-word answer is not possible, provide the most concise answer available. Question: "${text}"`;
-              
-              const payload = {
-                contents: [{
-                  role: "user",
-                  parts: [{ text: prompt }]
-                }]
-              };
+            const MAX_RETRIES = 3;
+            let lastError = null;
 
-              const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${keyToUse}`;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+                try {
+                    if (attempt > 0) {
+                        const waitMs = 1000 * (2 ** (attempt - 1));
+                        setStatusMessage(`Model busy. Retrying... (${attempt}/${MAX_RETRIES - 1})`);
+                        await new Promise(resolve => setTimeout(resolve, waitMs));
+                    }
 
-              const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-              
-              if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error?.message || `API error: ${response.statusText}`);
-              }
+                    // UPDATED PROMPT: Better for multiple choice questions
+                    const prompt = `From the following question and options, provide only the text of the correct answer. Question: "${text}"`;
+                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${keyToUse}`;
+                    
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
 
-              const result = await response.json();
-              
-              if (result.candidates && result.candidates.length > 0) {
-                const generatedText = result.candidates[0].content.parts[0].text;
-                setAnswer(generatedText.trim());
-              } else {
-                setAnswer("Sorry, I couldn't generate a response.");
-              }
-            } catch (error) {
-              console.error("Error asking AI:", error);
-              setAnswer(`Error: ${error.message}`);
-              if (error.message.includes("API key not valid")) {
+                    if (response.status >= 500 || response.status === 429) {
+                        const errorData = await response.json();
+                        const errorMessage = errorData.error?.message.includes('overloaded') 
+                            ? "The model is overloaded." 
+                            : (errorData.error?.message || `Server error: ${response.statusText}`);
+                        throw new Error(errorMessage);
+                    }
+
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error?.message || `API error: ${response.statusText}`);
+                    }
+
+                    const result = await response.json();
+                    if (result.candidates && result.candidates.length > 0) {
+                        const generatedText = result.candidates[0].content.parts[0].text;
+                        setAnswer(generatedText.trim().replace(/[\*\."]/g, '')); // Clean up markdown and quotes
+                    } else {
+                        setAnswer("Sorry, I couldn't generate a response.");
+                    }
+
+                    setIsAiProcessing(false);
+                    setStatusMessage('');
+                    return; 
+
+                } catch (error) {
+                    lastError = error;
+                    console.error(`Attempt ${attempt + 1} failed:`, error.message);
+                    if (!error.message.includes("overloaded") && !error.message.includes("Server error")) {
+                        break;
+                    }
+                }
+            }
+
+            setAnswer(`Error: ${lastError.message}`);
+            if (lastError.message.includes("API key not valid")) {
                 setError("Your API key is invalid. Please check it.");
                 setShowApiModal(true);
-              }
-            } finally {
-              setIsAiProcessing(false);
             }
+            setIsAiProcessing(false);
+            setStatusMessage('');
           };
 
-          // Function to handle Text-to-Speech using browser's native API
           const handleSpeakAnswer = (textToSpeak) => {
-            if (!textToSpeak || !('speechSynthesis' in window)) {
-              setError("Speech synthesis is not supported in this browser.");
+            if (!textToSpeak || !('speechSynthesis' in window) || textToSpeak.startsWith('Error:')) {
               return;
             }
             if (isSpeaking) {
@@ -194,13 +211,9 @@
                 setIsSpeaking(false);
                 return;
             }
-
             setIsSpeaking(true);
             const utterance = new SpeechSynthesisUtterance(textToSpeak);
-            
-            utterance.onend = () => {
-              setIsSpeaking(false);
-            };
+            utterance.onend = () => setIsSpeaking(false);
             utterance.onerror = (event) => {
               console.error("SpeechSynthesis Error", event);
               setError("An error occurred during speech synthesis.");
@@ -213,13 +226,12 @@
             <div className="min-h-screen bg-gray-200 font-sans text-gray-800 p-8 flex flex-col items-center justify-center">
               <div className="iphone-glass-effect p-6 rounded-3xl shadow-lg w-full max-w-sm space-y-6 border text-center">
                 
-                {/* Header */}
                 <div className="mb-4">
                   <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
-                  <p className="text-gray-600">Tap the mic and ask your question.</p>
+                  {/* CHANGED: Instructions for manual stop */}
+                  <p className="text-gray-600">Tap the mic to start, speak, then tap again to stop.</p>
                 </div>
 
-                {/* Microphone Button */}
                 <button
                   onClick={toggleListening}
                   disabled={!isReady || isAiProcessing}
@@ -233,14 +245,12 @@
                   </svg>
                 </button>
 
-                {/* Status Messages */}
                 <div className="h-6">
                   {error && <p className="text-red-500">{error}</p>}
                   {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
-                  {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">Thinking...</p>}
+                  {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">{statusMessage}</p>}
                 </div>
 
-                {/* Output Section */}
                 <div className="space-y-4">
                   <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300">
                     <h2 className="text-lg font-bold mb-2 text-gray-800">Your Question:</h2>
@@ -251,7 +261,7 @@
                     <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${answer && 'answer-highlight'}`}>
                       <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
                       <p className="text-gray-600">{answer}</p>
-                      <button
+                      {!answer.startsWith('Error:') && (<button
                         onClick={() => handleSpeakAnswer(answer)}
                         disabled={!answer}
                         className="absolute bottom-4 right-4 bg-gray-300 hover:bg-gray-400 disabled:bg-gray-400 text-gray-800 p-2 rounded-full transition duration-200"
@@ -266,13 +276,12 @@
                             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
                           </svg>
                         )}
-                      </button>
+                      </button>)}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* API Key Modal */}
               {showApiModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
                   <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-md">
