@@ -58,7 +58,6 @@
           useEffect(() => {
             if ('webkitSpeechRecognition' in window) {
               const newRecognition = new window.webkitSpeechRecognition();
-              // CHANGED: Set to true for manual stop
               newRecognition.continuous = true; 
               newRecognition.lang = 'en-US'; 
               newRecognition.interimResults = true; 
@@ -68,7 +67,6 @@
                 setError('');
               };
 
-              // CHANGED: Logic to handle continuous results
               newRecognition.onresult = (event) => {
                 let fullTranscript = '';
                 for (let i = 0; i < event.results.length; i++) {
@@ -112,10 +110,8 @@
               return;
             }
             if (isListening) {
-              // If listening, stop it. This triggers onend.
               recognition.stop();
             } else {
-              // If not listening, clear old text and start.
               setSpeechText('');
               setAnswer('');
               setError('');
@@ -148,8 +144,9 @@
                         await new Promise(resolve => setTimeout(resolve, waitMs));
                     }
 
-                    // UPDATED PROMPT: Better for multiple choice questions
-                    const prompt = `From the following question and options, provide only the text of the correct answer. Question: "${text}"`;
+                    // ############  NEW, STRICTER PROMPT  ############
+                    const prompt = `You will be given a multiple-choice question and a list of possible answers. Your task is to choose the single best answer from the provided list ONLY. Do not use outside knowledge to provide an answer that is not in the list. Respond with only the text of the correct option. The user's input is: "${text}"`;
+                    
                     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
                     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${keyToUse}`;
                     
@@ -175,7 +172,7 @@
                     const result = await response.json();
                     if (result.candidates && result.candidates.length > 0) {
                         const generatedText = result.candidates[0].content.parts[0].text;
-                        setAnswer(generatedText.trim().replace(/[\*\."]/g, '')); // Clean up markdown and quotes
+                        setAnswer(generatedText.trim().replace(/[\*\."]/g, ''));
                     } else {
                         setAnswer("Sorry, I couldn't generate a response.");
                     }
@@ -228,7 +225,6 @@
                 
                 <div className="mb-4">
                   <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
-                  {/* CHANGED: Instructions for manual stop */}
                   <p className="text-gray-600">Tap the mic to start, speak, then tap again to stop.</p>
                 </div>
 
