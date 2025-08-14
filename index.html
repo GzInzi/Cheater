@@ -1,17 +1,14 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Cheater</title>
-    <!-- Tailwind CSS CDN for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React and ReactDOM from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for JSX compilation in the browser -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Face-api.js for face and eye tracking -->
     <script src="https://cdn.jsdelivr.net/npm/face-api.js@1.3.1/dist/face-api.min.js"></script>
     <style>
       body {
@@ -84,7 +81,8 @@
           const [isListening, setIsListening] = useState(false);
           const [recognition, setRecognition] = useState(null);
           const [speechText, setSpeechText] = useState('');
-          const [answer, setAnswer] = useState('');
+          const [shortAnswer, setShortAnswer] = useState(''); // New state for short answer
+          const [fullAnswer, setFullAnswer] = useState(''); // New state for full answer
           const [isAiProcessing, setIsAiProcessing] = useState(false);
           const [isSpeaking, setIsSpeaking] = useState(false);
           const [error, setError] = useState('');
@@ -147,9 +145,12 @@
               
               newRecognition.onend = () => {
                 setIsListening(false);
-                // Trigger AI processing only if there is valid text
-                if (speechTextRef.current) {
-                    handleAskAI(speechTextRef.current);
+                if (speechTextRef.current.trim() !== '') {
+                    handleAskAI(speechTextRef.current, 'short');
+                } else {
+                    // If eyes were closed and no text was captured, restart listening
+                    // This happens after a short blink
+                    recognition.start();
                 }
               };
               
@@ -228,7 +229,20 @@
               return () => clearInterval(detectEyes);
             }
           }, [isListening, modelsLoaded]);
-
+          
+          // Trigger action when eyes are closed for a short period
+          useEffect(() => {
+            // If eyes are closed for 3-9 frames (0.3 to 0.9 seconds)
+            if (eyesClosedCount >= 3 && eyesClosedCount <= 9) {
+                // Check if listening and speechText is empty, meaning a new question is needed
+                if (isListening && !speechText) {
+                    // Stop the current listening session to restart
+                    recognition.stop();
+                    setSpeechText(''); // Clear old text for a new question
+                }
+            }
+          }, [eyesClosedCount, isListening, recognition, speechText]);
+          
           // Trigger stop listening when eyes are closed for a period
           useEffect(() => {
             if (eyesClosedCount > 15) { // 1.5 seconds of eyes being closed
@@ -237,6 +251,7 @@
               }
             }
           }, [eyesClosedCount]);
+
 
           // Function to start or stop listening
           const toggleListening = () => {
@@ -248,14 +263,15 @@
               recognition.stop();
             } else {
               setSpeechText('');
-              setAnswer('');
+              setShortAnswer('');
+              setFullAnswer('');
               setError('');
               recognition.start();
             }
           };
           
           // Function to call the Gemini API for a short answer
-          const handleAskAI = async (text) => {
+          const handleAskAI = async (text, responseType) => {
             if (!text) return;
             // Check for API key in state or local storage
             let keyToUse = apiKey;
@@ -269,12 +285,15 @@
             }
 
             setIsAiProcessing(true);
-            setAnswer('');
+
+            let prompt;
+            if (responseType === 'short') {
+              prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be direct, accurate, and extremely concise, in a single sentence if possible. The user's question is: "${text}"`;
+            } else { // 'full'
+              prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Your response should be detailed, accurate, and comprehensive, providing a full explanation. The user's question is: "${text}"`;
+            }
 
             try {
-              // The prompt is now structured to give a very concise answer
-              const prompt = `Act as a research assistant. The user will ask a question. Your primary goal is to find the most current and accurate answer. Specifically, for questions about current events or facts (like "who is the president of Sri Lanka"), you must check for the most recent information available. Your response should be direct, accurate, and concise. The user's question is: "${text}"`;
-              
               const payload = {
                 contents: [{
                   role: "user",
@@ -300,13 +319,28 @@
                   result.candidates[0].content && result.candidates[0].content.parts &&
                   result.candidates[0].content.parts.length > 0) {
                 const generatedText = result.candidates[0].content.parts[0].text;
-                setAnswer(generatedText);
+                if (responseType === 'short') {
+                  setShortAnswer(generatedText);
+                  setFullAnswer(''); // Clear full answer for new question
+                } else {
+                  setFullAnswer(generatedText);
+                }
               } else {
-                setAnswer("Sorry, I couldn't generate a response. Please try again.");
+                const errorMessage = "Sorry, I couldn't generate a response. Please try again.";
+                if (responseType === 'short') {
+                  setShortAnswer(errorMessage);
+                } else {
+                  setFullAnswer(errorMessage);
+                }
               }
             } catch (error) {
               console.error("Error asking AI:", error);
-              setAnswer("An error occurred while fetching the answer.");
+              const errorMessage = "An error occurred while fetching the answer.";
+              if (responseType === 'short') {
+                setShortAnswer(errorMessage);
+              } else {
+                setFullAnswer(errorMessage);
+              }
             } finally {
               setIsAiProcessing(false);
             }
@@ -390,8 +424,13 @@
                   <p className="text-gray-600">Tap the mic, speak your question, and get an instant answer.</p>
                 </div>
 
-                {/* Hidden video element for eye tracking */}
-                <video ref={videoRef} autoPlay muted className="hidden"></video>
+                {/* Visible video element for eye tracking */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  muted
+                  className="w-full h-auto rounded-xl shadow-lg border border-gray-300"
+                ></video>
 
                 {/* Microphone Button */}
                 <button
@@ -420,13 +459,13 @@
                     <p className="text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
                   </div>
                   
-                  {answer && (
+                  {shortAnswer && (
                     <div className="space-y-4">
-                        <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${answer && 'answer-highlight'}`}>
+                        <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300 ${shortAnswer && 'answer-highlight'}`}>
                           <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
-                          <p className="text-gray-600">{answer}</p>
+                          <p className="text-gray-600">{shortAnswer}</p>
                           <button
-                            onClick={() => handleSpeakAnswer(answer)}
+                            onClick={() => handleSpeakAnswer(shortAnswer)}
                             disabled={isSpeaking}
                             className="absolute bottom-4 right-4 bg-gray-300 hover:bg-gray-400 disabled:bg-gray-400 text-gray-800 p-2 rounded-full transition duration-200"
                             aria-label="Read answer aloud"
@@ -438,11 +477,26 @@
                               </svg>
                             ) : (
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M14.5 12c0 .9-.7 1.7-1.5 1.9v4.2c2.8-.5 5-3 5-6.1s-2.2-5.6-5-6.1v4.2c.8.2 1.5 1 1.5 1.9zm-2.5 0V6.1c-2.8.5-5 3-5 6.1s2.2 5.6 5 6.1v-4.2c-.8-.2-1.5-1-1.5-1.9zm-3.5 0H5.5c0 3.8 2.5 7.1 6 7.9V21h1v-1.9c3.5-.9 6-4.2 6-7.9h-1c0 3.1-2.2 5.6-5 6.1v-4.2c.8-.2 1.5-1 1.5-1.9v-4.2c-2.8.5-5 3-5 6.1v4.2c.8.2 1.5 1 1.5 1.9z"/>
+                                <path d="M14.5 12c0 .9-.7 1.7-1.5 1.9v4.2c2.8-.5 5-3 5-6.1s-2.2-5.6-5-6.1v4.2c.8.2 1.5 1 1.5 1.9zm-2.5 0V6.1c-2.8.5-5 3-5 6.1s2.2 5.6 5 6.1v-4.2c-.8-.2-1.5-1-1.5-1.9zm-3.5 0H5.5c0 3.8 2.5 7.1 6 7.9V21h1v-1.9c3.5-.9 6-4.2 6-7.9h-1c0 3.1-2.2 5.6-5 6.1v-4.2c.8.2 1.5 1 1.5 1.9v-4.2c-2.8.5-5 3-5 6.1v4.2c.8.2 1.5 1 1.5 1.9z"/>
                               </svg>
                             )}
                           </button>
                         </div>
+                        {!fullAnswer && (
+                          <button
+                            onClick={() => handleAskAI(speechText, 'full')}
+                            disabled={isAiProcessing}
+                            className="w-full p-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-bold rounded-xl transition duration-200"
+                          >
+                            {isAiProcessing ? "Loading..." : "View Full Answer"}
+                          </button>
+                        )}
+                        {fullAnswer && (
+                          <div className="iphone-glass-effect p-4 rounded-xl text-left border border-gray-300">
+                              <h2 className="text-lg font-bold mb-2 text-gray-800">Full Answer:</h2>
+                              <p className="text-gray-600 whitespace-pre-wrap">{fullAnswer}</p>
+                          </div>
+                        )}
                     </div>
                   )}
                 </div>
@@ -485,7 +539,7 @@
                           }
                           setShowApiModal(false);
                           if (speechText) {
-                            handleAskAI(speechText);
+                            handleAskAI(speechText, 'short');
                           }
                         }}
                         disabled={!apiKey}
