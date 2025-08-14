@@ -109,7 +109,7 @@
 
             try {
               // The prompt is now structured to give a very concise answer
-              const prompt = `Based on the following spoken question, provide a short, accurate answer. Just get the answer only: "${text}"`;
+              const prompt = `Based on the following spoken question, provide a short, accurate answer. If the question contains options, please choose the correct option. Your response should contain ONLY the correct answer, nothing else. The input is: "${text}"`;
               
               const payload = {
                 contents: [{
