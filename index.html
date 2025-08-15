@@ -2,25 +2,27 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Cheater</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
-      body {
-        background-color: #f0f0f0;
-      }
+      body { background-color: #f0f0f0; color: #1f2937; }
+      .dark body { background-color: #1f2937; color: #f9fafb; }
       .iphone-glass-effect {
         background-color: rgba(255, 255, 255, 0.4);
         backdrop-filter: blur(10px) saturate(180%);
         -webkit-backdrop-filter: blur(10px) saturate(180%);
-        /* Border will now be applied conditionally with Tailwind */
       }
-      .answer-highlight {
-        background-color: rgba(59, 130, 246, 0.2); /* blue-500 with transparency */
-      }
+      .dark .iphone-glass-effect { background-color: rgba(31, 41, 55, 0.4); }
+      .text-theme-primary { color: #1f2937; }
+      .dark .text-theme-primary { color: #f9fafb; }
+      .text-theme-secondary { color: #4b5563; }
+      .dark .text-theme-secondary { color: #d1d5db; }
+      .history-panel { max-height: 60vh; overflow-y: auto; }
+      .item-checked { text-decoration: line-through; opacity: 0.6; }
     </style>
 </head>
 <body>
@@ -29,317 +31,269 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // Main App component
         function App() {
+          const [currentView, setCurrentView] = useState('main');
+          const [mode, setMode] = useState('quiz');
           const [isListening, setIsListening] = useState(false);
           const [recognition, setRecognition] = useState(null);
           const [speechText, setSpeechText] = useState('');
           const [answer, setAnswer] = useState('');
           const [isAiProcessing, setIsAiProcessing] = useState(false);
-          const [isSpeaking, setIsSpeaking] = useState(false);
-          const [error, setError] = useState('');
-          const [isReady, setIsReady] = useState(false);
           const [apiKey, setApiKey] = useState("");
-          const [showApiModal, setShowApiModal] = useState(false);
-          const [saveApiKey, setSaveApiKey] = useState(false);
           const [statusMessage, setStatusMessage] = useState('');
+          const [isDarkMode, setIsDarkMode] = useState(false);
+          const [history, setHistory] = useState([]);
+          const [uploadedImage, setUploadedImage] = useState(null);
+          const fileInputRef = useRef(null);
           const speechTextRef = useRef('');
-
-          // Load API key from localStorage on component mount
+          
           useEffect(() => {
             const savedKey = localStorage.getItem('geminiApiKey');
-            if (savedKey) {
-              setApiKey(savedKey);
-              setSaveApiKey(true);
+            if (savedKey) setApiKey(savedKey);
+
+            const savedTheme = localStorage.getItem('cheaterTheme');
+            if (savedTheme === 'dark') {
+                document.documentElement.classList.add('dark');
+                setIsDarkMode(true);
             }
+
+            const savedHistory = localStorage.getItem('cheaterHistory');
+            if(savedHistory) setHistory(JSON.parse(savedHistory));
           }, []);
 
-          // Set up the SpeechRecognition API
           useEffect(() => {
             if ('webkitSpeechRecognition' in window) {
-              const newRecognition = new window.webkitSpeechRecognition();
-              newRecognition.continuous = true; 
-              newRecognition.lang = 'en-US'; 
-              newRecognition.interimResults = true; 
-
-              newRecognition.onstart = () => {
-                setIsListening(true);
-                setError('');
+              const rec = new window.webkitSpeechRecognition();
+              rec.continuous = true; rec.interimResults = true; rec.lang = 'en-US';
+              rec.onstart = () => setIsListening(true);
+              rec.onresult = (event) => {
+                let full = '';
+                for (let i = 0; i < event.results.length; i++) full += event.results[i][0].transcript;
+                setSpeechText(full);
               };
-
-              newRecognition.onresult = (event) => {
-                let fullTranscript = '';
-                for (let i = 0; i < event.results.length; i++) {
-                    fullTranscript += event.results[i][0].transcript;
-                }
-                setSpeechText(fullTranscript);
-              };
-
-              newRecognition.onerror = (event) => {
+              rec.onerror = (e) => setIsListening(false);
+              rec.onend = () => {
                 setIsListening(false);
-                if (event.error === 'not-allowed') {
-                  setError("Microphone access was denied. Please enable it.");
-                } else {
-                  setError(`Speech recognition error: ${event.error}`);
-                }
-                console.error('Speech recognition error:', event.error);
-              };
-              
-              newRecognition.onend = () => {
-                setIsListening(false);
-                if (speechTextRef.current.trim()) { 
+                if (speechTextRef.current.trim() || (mode === 'explain' && uploadedImage)) {
                     handleAskAI(speechTextRef.current.trim());
                 }
               };
-              
-              setRecognition(newRecognition);
-              setIsReady(true);
-            } else {
-              setError("Speech Recognition is not supported in this browser.");
+              setRecognition(rec);
             }
-          }, []);
+          }, [uploadedImage, mode]);
 
-          useEffect(() => {
-            speechTextRef.current = speechText;
-          }, [speechText]);
+          useEffect(() => { speechTextRef.current = speechText; }, [speechText]);
+          useEffect(() => { localStorage.setItem('cheaterHistory', JSON.stringify(history)); }, [history]);
 
-          // Function to start or stop listening
+          const toggleTheme = () => {
+            const newIsDarkMode = !isDarkMode;
+            setIsDarkMode(newIsDarkMode);
+            document.documentElement.classList.toggle('dark', newIsDarkMode);
+            localStorage.setItem('cheaterTheme', newIsDarkMode ? 'dark' : 'light');
+          };
+
           const toggleListening = () => {
-            if (!recognition) {
-              setError("Speech Recognition is not available.");
-              return;
-            }
+            if (!recognition) return;
             if (isListening) {
-              recognition.stop();
+                recognition.stop();
             } else {
-              setSpeechText('');
-              setAnswer('');
-              setError('');
-              recognition.start();
+                setSpeechText('');
+                setAnswer('');
+                recognition.start();
             }
           };
-          
-          const handleAskAI = async (text) => {
-            if (!text) return;
-            let keyToUse = apiKey || localStorage.getItem('geminiApiKey');
-            
-            if (!keyToUse) {
-              setShowApiModal(true);
-              return;
-            }
 
+          const handleImageUpload = (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onloadend = () => setUploadedImage(reader.result);
+                reader.readAsDataURL(file);
+            }
+          };
+
+          const handleAskAI = async (text, currentMode = mode) => {
+            if (!text && !(currentMode === 'explain' && uploadedImage)) return;
+            let keyToUse = apiKey || localStorage.getItem('geminiApiKey');
+            if (!keyToUse) { setShowApiModal(true); return; }
             setIsAiProcessing(true);
             setAnswer('');
-            setError('');
-            setStatusMessage('Thinking...');
-
-            const MAX_RETRIES = 3;
+            setStatusMessage('Analyzing...');
+            
+            let prompt = text;
+            let payload = {};
             let lastError = null;
 
+            if (currentMode === 'explain' && uploadedImage) {
+                prompt = text || "What is in this image? Explain it in detail.";
+                payload = { contents: [{ parts: [{ text: prompt }, { inline_data: { mime_type: "image/jpeg", data: uploadedImage.split(',')[1] } }] }] };
+            } else {
+                 switch (currentMode) {
+                    case 'quiz': prompt = `Quiz Assistant: For multiple-choice, provide ONLY the correct option. For direct questions, answer concisely. Question: "${text}"`; break;
+                    case 'math': prompt = `Math Solver: Provide the final answer, then a step-by-step explanation. Problem: "${text}"`; break;
+                    case 'writer': prompt = `Writing Assistant: Draft a message based on these points: "${text}"`; break;
+                }
+                payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+            }
+            
+            const MAX_RETRIES = 3;
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
                 try {
                     if (attempt > 0) {
                         const waitMs = 1000 * (2 ** (attempt - 1));
-                        setStatusMessage(`Model busy. Retrying... (${attempt}/${MAX_RETRIES - 1})`);
+                        setStatusMessage(`Server busy. Retrying... (${attempt}/${MAX_RETRIES - 1})`);
                         await new Promise(resolve => setTimeout(resolve, waitMs));
                     }
-
-                    const prompt = `You will be given a multiple-choice question and a list of possible answers. Your task is to choose the single best answer from the provided list ONLY. Do not use outside knowledge to provide an answer that is not in the list. Respond with only the text of the correct option. The user's input is: "${text}"`;
                     
-                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
                     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${keyToUse}`;
-                    
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
+                    const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 
-                    if (response.status >= 500 || response.status === 429) {
-                        const errorData = await response.json();
-                        const errorMessage = errorData.error?.message.includes('overloaded') 
-                            ? "The model is overloaded." 
-                            : (errorData.error?.message || `Server error: ${response.statusText}`);
-                        throw new Error(errorMessage);
-                    }
-
-                    if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error?.message || `API error: ${response.statusText}`);
-                    }
+                    if (response.status >= 500) { throw new Error(`API error: ${response.status}`); }
+                    if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error?.message || `API error: ${response.statusText}`); }
 
                     const result = await response.json();
-                    if (result.candidates && result.candidates.length > 0) {
-                        const generatedText = result.candidates[0].content.parts[0].text;
-                        setAnswer(generatedText.trim().replace(/[\*\."]/g, ''));
-                    } else {
-                        setAnswer("Sorry, I couldn't generate a response.");
-                    }
-
+                    const generatedText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const finalAnswer = generatedText ? generatedText.trim() : "Couldn't generate a response.";
+                    setAnswer(finalAnswer);
+                    setHistory(prev => [{ id: Date.now(), question: text || "Image Analysis", answer: finalAnswer, mode: currentMode }, ...prev]);
+                    
                     setIsAiProcessing(false);
                     setStatusMessage('');
                     return; 
-
                 } catch (error) {
                     lastError = error;
-                    console.error(`Attempt ${attempt + 1} failed:`, error.message);
-                    if (!error.message.includes("overloaded") && !error.message.includes("Server error")) {
-                        break;
-                    }
+                    console.error(`Attempt ${attempt + 1} failed:`, error);
                 }
             }
-
-            setAnswer(`Error: ${lastError.message}`);
-            if (lastError.message.includes("API key not valid")) {
-                setError("Your API key is invalid. Please check it.");
-                setShowApiModal(true);
-            }
+            setAnswer(lastError.toString());
             setIsAiProcessing(false);
             setStatusMessage('');
           };
 
-          const handleSpeakAnswer = (textToSpeak) => {
-            if (!textToSpeak || !('speechSynthesis' in window) || textToSpeak.startsWith('Error:')) {
-              return;
-            }
-            if (isSpeaking) {
-                window.speechSynthesis.cancel();
-                setIsSpeaking(false);
-                return;
-            }
-            setIsSpeaking(true);
-            const utterance = new SpeechSynthesisUtterance(textToSpeak);
-            utterance.onend = () => setIsSpeaking(false);
-            utterance.onerror = (event) => {
-              console.error("SpeechSynthesis Error", event);
-              setError("An error occurred during speech synthesis.");
-              setIsSpeaking(false);
-            };
-            window.speechSynthesis.speak(utterance);
+          const restoreFromHistory = (item) => {
+            setMode(item.mode);
+            setSpeechText(item.question);
+            setAnswer(item.answer);
+            setCurrentView('main');
           };
           
-          return (
-            // ############  UPDATED LAYOUT CONTAINER  ############
-            <div className="min-h-screen bg-gray-200 font-sans text-gray-800 flex sm:items-center sm:justify-center">
-              {/* ############  UPDATED CARD WITH RESPONSIVE STYLES  ############ */}
-              <div className="iphone-glass-effect w-full flex-grow flex flex-col p-6 space-y-4 text-center sm:flex-grow-0 sm:max-w-sm sm:rounded-3xl sm:shadow-lg sm:border border-gray-300/30">
-                
-                {/* This div pushes the button and output to the bottom on mobile */}
+          const clearHistory = () => {
+            if(window.confirm("Are you sure you want to clear all history? This cannot be undone.")) {
+                setHistory([]);
+            }
+          };
+
+          const MODES = { 
+            quiz: "Ask a question or read a quiz.", 
+            math: "State your math problem.", 
+            writer: "Dictate an email or speech.",
+            explain: "Upload an image and ask about it."
+          };
+          const modeKeys = Object.keys(MODES);
+
+          const MainView = () => (
+            <div className="w-full h-full flex flex-col space-y-4">
+                <div className="flex-shrink-0">
+                    <h1 className="text-3xl font-bold text-theme-primary pt-8 sm:pt-0">Cheater</h1>
+                    <div className="flex justify-center space-x-2 p-2 iphone-glass-effect rounded-xl my-4 border border-gray-400/20 dark:border-gray-600/30 overflow-x-auto">
+                        {modeKeys.map(m => (
+                            <button key={m} onClick={() => { setMode(m); setAnswer(''); setSpeechText(''); setUploadedImage(null); }} className={`px-4 py-2 rounded-lg text-sm font-semibold transition capitalize flex-shrink-0 ${mode === m ? 'bg-blue-500 text-white' : 'bg-white/50 text-theme-secondary dark:bg-gray-800/30'}`}>{m}</button>
+                        ))}
+                    </div>
+                </div>
+
                 <div className="flex-grow flex flex-col justify-center items-center space-y-4">
-                    <div className="mb-4">
-                      <h1 className="text-3xl font-bold text-gray-800 mb-2">Cheater</h1>
-                      <p className="text-gray-600">Tap the mic to start, speak, then tap again to stop.</p>
-                    </div>
-
-                    <button
-                      onClick={toggleListening}
-                      disabled={!isReady || isAiProcessing}
-                      className={`w-28 h-28 rounded-full transition-all duration-300 shadow-lg flex-shrink-0
-                      ${isListening ? 'bg-red-500 transform scale-110 ring-4 ring-red-300' : 'bg-blue-500 hover:bg-blue-600'} 
-                      disabled:bg-gray-400 disabled:scale-100 disabled:ring-0`}
-                    >
-                      <svg className={`mx-auto text-white ${isListening ? 'animate-pulse' : ''}`} width="48" height="48" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M12 14C13.1046 14 14 13.1046 14 12V6C14 4.89543 13.1046 4 12 4C10.8954 4 10 4.89543 10 6V12C10 13.1046 10.8954 14 12 14Z"/>
-                        <path d="M17 12C17 14.7614 14.7614 17 12 17C9.23858 17 7 14.7614 7 12H5C5 15.866 7.93452 19 11.5 19V22H12.5V19C16.0655 19 19 15.866 19 12H17Z"/>
-                      </svg>
-                    </button>
-
-                    <div className="h-6">
-                      {error && <p className="text-red-500">{error}</p>}
-                      {isListening && <p className="text-gray-800 animate-pulse">Listening...</p>}
-                      {isAiProcessing && !isListening && <p className="text-gray-800 animate-pulse">{statusMessage}</p>}
-                    </div>
+                    <p className="text-theme-secondary h-10 px-4">{MODES[mode]}</p>
+                    
+                    {mode === 'explain' ? (
+                        <div className="w-full flex-grow flex flex-col items-center justify-center space-y-4">
+                            <div onClick={() => fileInputRef.current.click()} className="w-full h-40 border-2 border-dashed border-gray-400/80 rounded-lg flex items-center justify-center cursor-pointer bg-white/30 dark:bg-gray-800/20">
+                                {uploadedImage ? <img src={uploadedImage} className="max-h-full max-w-full object-contain rounded-md" /> : <span className="text-theme-secondary">Tap to upload an image</span>}
+                            </div>
+                            <input type="file" ref={fileInputRef} onChange={handleImageUpload} accept="image/*" className="hidden" />
+                            <button onClick={toggleListening} disabled={!recognition || !uploadedImage} className={`w-full flex items-center justify-center bg-blue-500 text-white font-semibold py-3 rounded-lg shadow-lg disabled:bg-gray-400`}>
+                                {/* This is an SVG for the microphone icon */}
+                                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2S10 4.9 10 6v6c0 1.1.9 2 2 2zM17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+                                <span className="ml-2">{isListening ? 'Listening...' : (speechText ? `"${speechText}"` : 'Ask about this image')}</span>
+                            </button>
+                        </div>
+                    ) : (
+                        <button onClick={toggleListening} disabled={!recognition} className={`w-32 h-32 rounded-full transition-all shadow-lg flex-shrink-0 flex items-center justify-center ${isListening ? 'bg-red-500 scale-110' : 'bg-blue-500'}`}>
+                            {/* ############  NEW, CORRECTED ICON SVG  ############ */}
+                            <svg className="w-16 h-16 text-white" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2S10 4.9 10 6v6c0 1.1.9 2 2 2zm5-3c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"></path>
+                            </svg>
+                        </button>
+                    )}
                 </div>
 
-                {/* This is the output section */}
                 <div className="space-y-4 flex-shrink-0">
-                  <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[6rem] max-h-48 overflow-auto border border-gray-300/30">
-                    <h2 className="text-lg font-bold mb-2 text-gray-800">Your Question:</h2>
-                    <p className="text-gray-600">{speechText || <span className="italic text-gray-400">Your question will appear here.</span>}</p>
-                  </div>
-                  
-                  {answer && (
-                    <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-300/30 ${answer && 'answer-highlight'}`}>
-                      <h2 className="text-lg font-bold mb-2 text-gray-800">AI Answer:</h2>
-                      <p className="text-gray-600">{answer}</p>
-                      {!answer.startsWith('Error:') && (<button
-                        onClick={() => handleSpeakAnswer(answer)}
-                        disabled={!answer}
-                        className="absolute bottom-4 right-4 bg-gray-300 hover:bg-gray-400 disabled:bg-gray-400 text-gray-800 p-2 rounded-full transition duration-200"
-                        aria-label="Read answer aloud"
-                      >
-                        {isSpeaking ? (
-                           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                           </svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-                          </svg>
-                        )}
-                      </button>)}
+                    <div className="h-6">
+                      {isAiProcessing && <p className="text-theme-secondary animate-pulse">{statusMessage}</p>}
                     </div>
-                  )}
+                    { mode !== 'explain' &&
+                        <div className="iphone-glass-effect p-4 rounded-xl text-left min-h-[4rem] border border-gray-400/20 dark:border-gray-600/30">
+                            <h2 className="text-sm font-bold text-theme-primary mb-1">Your Request:</h2>
+                            <p className="text-theme-secondary">{speechText || <span className="italic opacity-70">...</span>}</p>
+                        </div>
+                    }
+                    {answer && (
+                        <div className={`relative iphone-glass-effect p-4 rounded-xl text-left border border-gray-400/20 dark:border-gray-600/30`}>
+                          <h2 className="text-lg font-bold text-theme-primary mb-2">AI Answer:</h2>
+                          <p className="text-theme-secondary text-lg" style={{ whiteSpace: 'pre-wrap' }}>{answer}</p>
+                        </div>
+                    )}
                 </div>
-              </div>
+            </div>
+          );
 
-              {showApiModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
-                  <div className="bg-white p-6 rounded-xl shadow-lg w-full max-w-md">
-                    <h2 className="text-xl font-bold text-gray-800 mb-4">Enter Gemini API Key</h2>
-                    <p className="text-gray-600 mb-4">You need a Gemini API key to use this app. You can get one from Google AI Studio.</p>
-                    <input
-                      type="password"
-                      className="w-full p-2 border border-gray-300 rounded-md mb-4 text-gray-800"
-                      placeholder="Enter your API key here..."
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                    <div className="flex items-center space-x-2 mb-4">
-                      <input
-                        type="checkbox"
-                        id="save-key-checkbox"
-                        checked={saveApiKey}
-                        onChange={(e) => setSaveApiKey(e.target.checked)}
-                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                      />
-                      <label htmlFor="save-key-checkbox" className="text-gray-600">Save API Key in browser</label>
-                    </div>
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => setShowApiModal(false)}
-                        className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-xl transition duration-200"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (saveApiKey) {
-                            localStorage.setItem('geminiApiKey', apiKey);
-                          } else {
-                            localStorage.removeItem('geminiApiKey');
-                          }
-                          setShowApiModal(false);
-                          if (speechTextRef.current.trim()) {
-                            handleAskAI(speechTextRef.current.trim());
-                          }
-                        }}
-                        disabled={!apiKey}
-                        className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded-xl transition duration-200"
-                      >
-                        Save and Use
-                      </button>
-                    </div>
-                  </div>
+          const HistoryView = () => (
+            <div className="flex flex-col h-full">
+                <h1 className="text-3xl font-bold text-theme-primary mb-4 pt-8 sm:pt-0">History</h1>
+                <div className="history-panel flex-grow">
+                    {history.length > 0 ? history.map(item => (
+                        <div key={item.id} onClick={() => restoreFromHistory(item)} className="text-left p-3 mb-2 rounded-lg bg-white/50 dark:bg-gray-800/30 cursor-pointer">
+                            <p className="font-semibold text-theme-primary truncate">{item.question}</p>
+                            <p className="text-sm text-theme-secondary mt-1 opacity-80 truncate">{item.answer}</p>
+                        </div>
+                    )) : <p className="text-theme-secondary">No history yet.</p>}
                 </div>
-              )}
+            </div>
+          );
+          
+          const SettingsView = () => (
+            <div className="flex flex-col h-full">
+                <h1 className="text-3xl font-bold text-theme-primary mb-4 pt-8 sm:pt-0">Settings</h1>
+                <div className="space-y-4 text-left">
+                    <div className="flex justify-between items-center p-3 rounded-lg bg-white/50 dark:bg-gray-800/30">
+                        <label className="font-semibold text-theme-primary">Dark Mode</label>
+                        <button onClick={toggleTheme} className="px-4 py-2 text-sm rounded-lg font-semibold bg-gray-300 dark:bg-gray-700">{isDarkMode ? 'Disable' : 'Enable'}</button>
+                    </div>
+                     <div className="flex justify-between items-center p-3 rounded-lg bg-white/50 dark:bg-gray-800/30">
+                        <label className="font-semibold text-theme-primary">Conversation History</label>
+                        <button onClick={clearHistory} className="px-4 py-2 text-sm rounded-lg font-semibold text-white bg-red-500">Clear</button>
+                    </div>
+                </div>
+            </div>
+          );
+
+          return (
+            <div className="min-h-screen flex items-stretch">
+              <div className="w-full flex flex-col text-center sm:max-w-sm mx-auto sm:my-8 sm:rounded-3xl sm:shadow-lg iphone-glass-effect sm:border border-gray-400/20 dark:border-gray-600/30 p-6 relative">
+                 <div className="absolute top-4 right-4 flex space-x-2 z-10">
+                    <button onClick={() => setCurrentView(currentView === 'history' ? 'main' : 'history')} className="p-2 rounded-full bg-white/50 dark:bg-gray-800/50 text-theme-secondary">📜</button>
+                    <button onClick={() => setCurrentView(currentView === 'settings' ? 'main' : 'settings')} className="p-2 rounded-full bg-white/50 dark:bg-gray-800/50 text-theme-secondary">⚙️</button>
+                </div>
+
+                {currentView === 'main' && <MainView />}
+                {currentView === 'history' && <HistoryView />}
+                {currentView === 'settings' && <SettingsView />}
+              </div>
             </div>
           );
         }
 
-        // Render the App component into the root element
-        const rootElement = document.getElementById('root');
-        ReactDOM.render(<App />, rootElement);
+        ReactDOM.render(<App />, document.getElementById('root'));
     </script>
 </body>
 </html>
